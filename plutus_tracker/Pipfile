@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+python-dotenv = "*"
+google-api-python-client = "*"
+google-auth-httplib2 = "*"
+google-auth-oauthlib = "*"
+boto3 = "*"
+pandas = "*"
+bs4 = "*"
+pyotp = "*"
+anticaptchaofficial = "*"
+requests = "*"
+
+[dev-packages]
+webdriver-manager = "*"
+selenium = "*"
+
+[requires]
+python_version = "3.8"

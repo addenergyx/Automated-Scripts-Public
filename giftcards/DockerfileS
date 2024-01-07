@@ -1,0 +1,33 @@
+FROM public.ecr.aws/lambda/python:3.8 as base
+
+# Hack to install chromium dependencies
+RUN yum install -y -q unzip
+RUN yum install -y https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+
+# Install Chromium
+COPY install-browser.sh /tmp/
+RUN /usr/bin/bash /tmp/install-browser.sh
+
+RUN pip install pipenv
+
+COPY ./giftcards/Pipfile ./giftcards/Pipfile.lock ${PROJECT_DIR}/
+
+# This tells pipenv that rather than create a virtualenv with our installed packages, we should install them directly in the the container’s system python.
+# Finally, the --deploy flag tells pipenv to blow up if the lock file is out of date.
+# That is, if the requirements specified in the Pipfile no longer align with the hashes specified in the lock file.
+
+RUN pip install --upgrade cython
+
+RUN pipenv install --system --deploy
+
+# Pandas in pipfile not working
+# RUN pip install pandas
+
+COPY ./common ${PROJECT_DIR}/common/
+COPY ./giftcards ${PROJECT_DIR}/giftcards/
+
+# Getting access denied in aws as not same user as locally
+RUN chmod -R 777 .
+
+CMD [ "/bin/sh" , "-c" , "cd giftcards && python -u airtime_giftcard_checker_api.py" ]
+
