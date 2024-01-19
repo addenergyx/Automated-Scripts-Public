@@ -20,3 +20,22 @@ The script functions as follows:
 - **Lambda Function**: The lambda function executes the following tasks:
   - It interacts with the ASDA Giftcards balance API to check the balance of the received gift card.
   - It saves the gift card information to my Google Photos and dynamodb for easy and convenient access.
+
+## Response
+```
+{
+    "statusCode": 200,
+    "body": {
+        "message": "Giftcard lambda invoke successful",
+        "Balance": 6.48,
+        "Added": [],
+        "Deleted": [
+            "giftcard_6314380605502977.png",
+            "giftcard_6314380606090142.png",
+            "giftcard_6314380605304854.png",
+            "giftcard_6314380654077532.png",
+            "giftcard_6314380656222310.png"
+        ]
+    }
+}
+```
