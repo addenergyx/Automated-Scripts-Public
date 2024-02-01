@@ -15,7 +15,6 @@ import os
 import requests
 import time
 import glob
-from selenium import webdriver
 from selenium.webdriver.common.by import By
 import logging
 
@@ -27,8 +26,9 @@ sys.path.append('../')
 
 from common.google_photos_upload import get_media_items_name, get_media_items_id, batch_upload, remove_media, move_media
 from common.captcha_bypass import CaptchaBypass
-from common.push_notifications import push_notification
 from common.aws_connection import connect_to_s3
+from common.notification_manager import NotificationManager
+from common.driver_manager import DriverManager
 
 logging.basicConfig(
     format='%(asctime)s %(message)s',
@@ -44,30 +44,23 @@ AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY')
 AWS_DEFAULT_REGION = "eu-west-1"
 WORKING_ENV = os.getenv('WORKING_ENV', 'DEV')
 NOTIFICATION_TOKEN = os.getenv('NOTIFICATION_TOKEN')
+PUBLIC_SITEKEY = '6LcGYtkZAAAAAHu9BgC-ON7jeraLq5Tgv3vFQzZZ'
+BALANCE_CHECKER_URL = "https://www.asdagiftcards.com/balance-check"
+API_URL = "https://api.asdagiftcards.com/api/v1/balance"
+PUSH_NOTIFICATION_TITLE = "Single ASDA Giftcard"
 
 def handler(event=None, context=None):
+
     if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-        from common.lambda_scraper import get_driver
-        driver = get_driver()  # Driver installed and set in docker
+        driver_manager = DriverManager('/opt/headless-chromium', '/opt/chromedriver')
+        driver = driver_manager.get_driver(headless=True)
         directory = '/tmp'
     else:
-        # from common.scraper import get_driver
-        # driver = get_driver(headless=True)
-
-        from webdriver_manager.chrome import ChromeDriverManager
-        from selenium.webdriver.chrome.service import Service as ChromeService
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless")
-        driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-
+        driver_manager = DriverManager()
+        driver = driver_manager.get_driver(headless=True)
         directory = os.path.join(os.getcwd(), 'images')
 
-
-    sitekey_clean = '6LcGYtkZAAAAAHu9BgC-ON7jeraLq5Tgv3vFQzZZ'
-
-    balance_checker_url = "https://www.asdagiftcards.com/balance-check"
-
-    api_url = "https://api.asdagiftcards.com/api/v1/balance"
+    notification_manager = NotificationManager(NOTIFICATION_TOKEN)
 
     cards_to_delete = []
     cardnumbers_from_album = []
@@ -82,10 +75,6 @@ def handler(event=None, context=None):
 
     giftcards_table = dynamodb.Table('giftcards')
 
-    # scan = giftcards_table.scan()
-    # current_giftcards_ddb = pd.DataFrame(scan['Items'])['card_id'].tolist()
-    # current_giftcards[current_giftcards['balance'].astype(float) > 0]['card_id'].tolist()
-
     current_giftcards_in_album = get_media_items_name()
 
     for item in current_giftcards_in_album:
@@ -95,6 +84,7 @@ def handler(event=None, context=None):
 
     bucket = event['Records'][0]['s3']['bucket']['name']
     key = event['Records'][0]['s3']['object']['key']
+
     s3_client = boto3.client('s3')
     response = s3_client.get_object(Bucket=bucket, Key=key)
     email_message = email.message_from_bytes(response['Body'].read())
@@ -124,6 +114,7 @@ def handler(event=None, context=None):
                 # giftcard_url = href[-1]['href']
 
                 # Newer giftcards have newlines in the url
+                # Also fixes the new revealyourgift links started 20/1/24
                 giftcard_url = giftcard_url.replace('\n', '').replace('\r', '').replace('=', '')
 
             page = requests.get(giftcard_url)
@@ -143,9 +134,7 @@ def handler(event=None, context=None):
                     # WebDriverWait(driver, 15).until(lambda driver: driver.find_element('id', "accountnumber_pin")) # Should wait for JS to finish loading
                     # html_ = driver.page_source
 
-
                     url = 'https://connect.runa.io/internal-service-api/wallet/asset/' + giftcard_url.split('/')[-1]
-                    # url = "https://connect.runa.io/internal-service-api/wallet/asset/2b5aa276-e9e7-49ec-9e2e-3401a2ec9085"
 
                     print('url: '+ url)
 
@@ -153,12 +142,7 @@ def handler(event=None, context=None):
                         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/112.0",
                         "Accept": "application/json",
                         "Accept-Language": "en-GB,en;q=0.5",
-
-                        # Changed encoding to get json, works if the API supports exporting directly as utf-8, can't be generalized as a solution imo
-                        # https://stackoverflow.com/a/67799052
-                        # "Accept-Encoding": "gzip, deflate, br",
                         "Accept-Encoding": "gzip, deflate, utf-8",
-
                         "Referer": "https://spend.runa.io/",
                         "Origin": "https://spend.runa.io",
                         "Connection": "keep-alive",
@@ -174,6 +158,65 @@ def handler(event=None, context=None):
                     page = requests.get(external_redemption_url)
                     giftcard_url = page.url
                     html_ = page.content
+
+                elif 'revealyourgift' in giftcard_url:
+
+                    # Airtime rewards now use a new giftcard provider that requires customers to 'claim' giftcard before the number and pin appear
+                    # This requires selenium to click the 'CLAIM YOUR GIFT CARD' button
+                    # Page uses javascript so can't get the link for the button from the page
+                    # javascript elements won't load in lambda so need to click manually
+
+
+                    notification_manager.push_notification(PUSH_NOTIFICATION_TITLE, f"Click link to claim giftcard: {giftcard_url}")
+
+                    max_attempts = 60  # Number of attempts to find the button
+                    attempt = 0
+
+                    driver.get(giftcard_url)
+
+                    while attempt < max_attempts:
+                        # try:
+                        response = requests.get(giftcard_url)
+
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        element = soup.find(id="barcode")
+                        if element:
+                            break
+                        else:
+                            time.sleep(5)
+                            # Wait for the button to be present
+                            # WebDriverWait(driver, 20).until(
+                            #     EC.presence_of_element_located((By.ID, "barcode"))
+                            # )
+                            # break  # Exit the loop if the button is found
+                        # except Exception as e:
+                        #     print(f"Attempt {attempt + 1} failed. Refreshing page...")
+                        #     driver.refresh()
+                        #     attempt += 1
+
+                    if attempt == max_attempts:
+                        # Return a specific response and quit the Lambda function
+                        notification_manager.push_notification(PUSH_NOTIFICATION_TITLE,
+                                          f"Failed to load giftcard after several attempts, "
+                                          f"make sure card has been manually claimed first then run giftcard tracker lambda{giftcard_url}")
+
+                        return {
+                            "statusCode": 400,
+                            "body": json.dumps("Failed to load giftcard after several attempts.")
+                        }
+
+                    page = requests.get(giftcard_url)
+                    html_ = page.content
+
+                    # Doesn't work in lambda, javascript won't load
+                    # driver.get(giftcard_url)
+                    # driver.implicitly_wait(20)
+                    # driver.find_element('class name', 'button-redeem').click()
+                    # giftcard_url = driver.current_url
+                    # driver.implicitly_wait(60)
+                    # driver.refresh()
+                    # driver.implicitly_wait(10)
+                    # html_ = driver.page_source
 
                 else:
                     break
@@ -195,9 +238,9 @@ def handler(event=None, context=None):
 
                 x = 0
 
-                while x < 3:
+                while x < 4:
 
-                    g_response = CaptchaBypass(sitekey_clean, balance_checker_url).bypass()
+                    g_response = CaptchaBypass(PUBLIC_SITEKEY, BALANCE_CHECKER_URL).bypass()
 
                     payload = {
                         "number": card_number,
@@ -210,7 +253,7 @@ def handler(event=None, context=None):
                         "Accept": "application/json, text/plain, */*",
                     }
 
-                    response = requests.request("POST", api_url, json=payload, headers=headers).json()
+                    response = requests.request("POST", API_URL, json=payload, headers=headers).json()
 
                     if 'response_code' in response and response['response_code'] == '00':
 
@@ -225,12 +268,11 @@ def handler(event=None, context=None):
                             # mail.store(item, "+FLAGS", "\\Deleted") # delete at the end instead
                             print(f'Card to be deleted: {card_id} with balance {balance}')
                             cards_to_delete.append(img_filename)
-                            push_notification(NOTIFICATION_TOKEN, "ASDA Giftcards", f"Card number: {card_id}\nCurrent balance: {balance}")
+                            notification_manager.push_notification(PUSH_NOTIFICATION_TITLE, f"Card number: {card_id}\nCurrent balance: {balance}")
                             break
 
                         else:
-
-                            push_notification(NOTIFICATION_TOKEN, "ASDA Giftcards", f"Card number: {card_id}\nCurrent balance: {balance}")
+                            notification_manager.push_notification(PUSH_NOTIFICATION_TITLE, f"Card number: {card_id}\nCurrent balance: {balance}")
 
                             if img_filename not in current_giftcards_in_album:
                                 # hti.screenshot(url=giftcard_url, save_as=img_filename)
@@ -255,7 +297,7 @@ def handler(event=None, context=None):
                         print(pin)
                         print(response['message'])
 
-                    if x == 2:
+                    if x == 3:
                         data.append([card_number, response['message'], '-'])
                         print(card_number)
                         print(pin)
@@ -264,7 +306,7 @@ def handler(event=None, context=None):
                         driver.close()
                         driver.quit()
 
-                        push_notification(NOTIFICATION_TOKEN, "ASDA Giftcards Lambda failed", f"Card number: {card_id}")
+                        notification_manager.push_notification(PUSH_NOTIFICATION_TITLE + " Lambda failed", f"Card number: {card_id}")
 
                         return json.dumps({
                             "statusCode": 500,
