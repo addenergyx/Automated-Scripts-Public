@@ -1,0 +1,11 @@
+Resources:
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: render-reviver
+      Runtime: python3.9
+      Handler: app.lambda_handler
+      Role: arn:aws:iam::xxxxxxx:role/lambda-deployment
+      Code:
+        S3Bucket: adoka-lambda-deployments
+        S3Key: RenderReviver.zip
