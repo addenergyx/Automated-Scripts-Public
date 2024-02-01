@@ -1,4 +1,4 @@
-# Giftcards Management Script
+# Giftcard Management
 
 ### Intent
 
