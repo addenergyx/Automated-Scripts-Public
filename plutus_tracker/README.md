@@ -16,6 +16,8 @@ This information, while not displayed on the Plutus portal, is accessible throug
 **API Integration**: The script leverages the hidden API of Plutus for streamlined login and direct access to my transaction and reward data.
 **Containerized Lambda Function**: Deployed as a containerized image in AWS Lambda, the script is set to run automatically every morning.
 
+![AWS Architecture](images/plutus-tracker-aws-arch.png)
+
 ### Visualization in Google Calendar
 
 The script visually represents the status of cashback rewards in Google Calendar as follows:
