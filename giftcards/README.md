@@ -1,5 +1,7 @@
 # Giftcard Management
 
+## New repo: https://github.com/addenergyx/giftcard-tracker
+
 ### Intent
 
 In light of the significant value of unused gift cards in the US, this script aims to manage and maximize the usage of gift cards, particularly ASDA gift cards, obtained through an employee perks and discount program.
